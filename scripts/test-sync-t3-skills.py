@@ -100,9 +100,14 @@ def main():
         profile_ids = ("profile-alpha", "profile-beta")
         for pid in profile_ids:
             p = profiles / pid
-            (p / "config/plugins").mkdir(parents=True)
+            (p / "config").mkdir(parents=True)
+            if pid == "profile-beta":
+                # Simulate stock T3 Code startup: config/plugins is a symlink to gemini config/plugins
+                (p / "config/plugins").symlink_to(fast.parent)
+            else:
+                (p / "config/plugins").mkdir(parents=True)
+                (p / "config/plugins/agy-fast").symlink_to(fast)
             (p / "config/skills").symlink_to(source)
-            (p / "config/plugins/agy-fast").symlink_to(fast)
             (p / "config/config.json").write_text(json.dumps({"plugins": {"swarm": {"enabled": True}}}), encoding="utf-8")
 
         base_cmd = [
