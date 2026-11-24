@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -246,6 +246,147 @@ function runSelfTest() {
     const r2 = run("node", [scriptPath, "--install-dir", installDir], forkDir);
     if (!r2.stdout.includes("Already up to date")) {
       throw new Error(`Expected idempotent second sync, got:\n${r2.stdout}`);
+    }
+
+    const agyScript = join(forkDir, "scripts", "generate-pstack-agy.mjs");
+    const skillSyncInstallDir = join(base, "installed-pstack-with-skills");
+    const skillsDir = join(base, "agy-skills");
+    mkdirSync(join(skillsDir, "custom-skill"), { recursive: true });
+    writeFileSync(
+      join(skillsDir, "custom-skill", "SKILL.md"),
+      '---\nname: custom-skill\ndescription: "Custom non-pstack test skill."\n---\n\nBody.\n',
+      "utf8",
+    );
+    symlinkSync(join(skillSyncInstallDir, "skills", "obsolete-skill"), join(skillsDir, "obsolete-skill"), "dir");
+
+    const s1 = run("node", [agyScript, "--install", "--install-dir", skillSyncInstallDir, "--skills-dir", skillsDir], forkDir);
+    if (!s1.stdout.includes("Synced skill links")) {
+      throw new Error(`Expected skill link sync output, got:\n${s1.stdout}`);
+    }
+    if (readlinkSync(join(skillsDir, "reframe")) !== join(skillSyncInstallDir, "skills", "reframe")) {
+      throw new Error("Expected reframe skill symlink to be installed");
+    }
+    try {
+      lstatSync(join(skillsDir, "obsolete-skill"));
+      throw new Error("Expected stale pstack symlink obsolete-skill to be removed");
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
+    if (lstatSync(join(skillsDir, "custom-skill")).isSymbolicLink() || !existsSync(join(skillsDir, "custom-skill", "SKILL.md"))) {
+      throw new Error("Expected non-pstack custom-skill directory to stay intact");
+    }
+    const s2 = run("node", [agyScript, "--install", "--install-dir", skillSyncInstallDir, "--skills-dir", skillsDir], forkDir);
+    if (s2.stdout.includes("Synced skill links")) {
+      throw new Error(`Expected idempotent second skill-link sync, got:\n${s2.stdout}`);
+    }
+
+    const t3Profiles = join(base, "t3-profiles");
+    const t3State = join(base, "t3-state");
+    const noAgyFast = join(base, "no-agy-fast");
+    const t3ProfileCfg = join(t3Profiles, "profile-ci", "config");
+    mkdirSync(join(t3ProfileCfg, "plugins"), { recursive: true });
+    symlinkSync(skillsDir, join(t3ProfileCfg, "skills"), "dir");
+    writeFileSync(join(t3ProfileCfg, "config.json"), JSON.stringify({ plugins: { swarm: { enabled: true } } }), "utf8");
+
+    const t3SyncScript = join(skillSyncInstallDir, "docs", "harness", "sync-t3-skills.py");
+    const runT3Sync = (...flags) =>
+      run(
+        "python3",
+        [
+          t3SyncScript,
+          "--profiles-dir",
+          t3Profiles,
+          "--source-skills-dir",
+          skillsDir,
+          "--pstack-dir",
+          skillSyncInstallDir,
+          "--agy-fast-dir",
+          noAgyFast,
+          "--state-dir",
+          t3State,
+          ...flags,
+        ],
+        forkDir,
+        { allowFailure: true },
+      );
+
+    const t3InitApply = runT3Sync("--apply");
+    if (t3InitApply.status !== 0) {
+      throw new Error(`Expected initial sync-t3-skills --apply to succeed: ${t3InitApply.stderr || t3InitApply.stdout}`);
+    }
+    const t3InitCheck = runT3Sync("--status", "--check");
+    if (t3InitCheck.status !== 0) {
+      throw new Error(`Expected initial sync-t3-skills --status --check exit 0, got ${t3InitCheck.status}: ${t3InitCheck.stderr || t3InitCheck.stdout}`);
+    }
+    if (!existsSync(join(t3ProfileCfg, "skills", "reframe", "SKILL.md")) || !existsSync(join(t3ProfileCfg, "skills", "custom-skill", "SKILL.md"))) {
+      throw new Error("Expected initial T3 profile stubs for reframe and custom-skill");
+    }
+
+    const syntheticSkillDir = join(forkDir, "pstack", "skills", "synthetic-upstream-skill");
+    mkdirSync(syntheticSkillDir, { recursive: true });
+    writeFileSync(
+      join(syntheticSkillDir, "SKILL.md"),
+      '---\nname: synthetic-upstream-skill\ndescription: "Synthetic skill added by an upstream sync test. Use for /synthetic-upstream-skill."\ndisable-model-invocation: true\n---\n\n# Synthetic upstream skill\n\nBody.\n',
+      "utf8",
+    );
+    run("node", [agyScript, "--install", "--install-dir", skillSyncInstallDir, "--skills-dir", skillsDir], forkDir);
+    if (readlinkSync(join(skillsDir, "synthetic-upstream-skill")) !== join(skillSyncInstallDir, "skills", "synthetic-upstream-skill")) {
+      throw new Error("Expected synthetic-upstream-skill symlink after install");
+    }
+    const t3AddStatus = runT3Sync("--status", "--check");
+    if (t3AddStatus.status !== 3) {
+      throw new Error(`Expected exit 3 after adding upstream skill, got ${t3AddStatus.status}: ${t3AddStatus.stderr || t3AddStatus.stdout}`);
+    }
+    const t3AddReport = JSON.parse(t3AddStatus.stdout).profiles["profile-ci"];
+    if (!t3AddReport.source_stale || !t3AddReport.needs_apply || t3AddReport.drift.length !== 0) {
+      throw new Error(`Unexpected T3 status after upstream skill addition: ${t3AddStatus.stdout}`);
+    }
+    const t3AddApply = runT3Sync("--apply");
+    if (t3AddApply.status !== 0) {
+      throw new Error(`Expected sync-t3-skills --apply after addition to succeed: ${t3AddApply.stderr || t3AddApply.stdout}`);
+    }
+    if (runT3Sync("--status", "--check").status !== 0) {
+      throw new Error("Expected sync-t3-skills --status --check exit 0 after applying addition");
+    }
+    const t3RulesPath = join(t3ProfileCfg, "plugins", "t3-skill-map", "rules", "AGENTS.md");
+    if (!existsSync(join(t3ProfileCfg, "skills", "synthetic-upstream-skill", "SKILL.md"))) {
+      throw new Error("Expected synthetic-upstream-skill stub in T3 profile");
+    }
+    if (!readFileSync(t3RulesPath, "utf8").includes("synthetic-upstream-skill")) {
+      throw new Error("Expected synthetic-upstream-skill in T3 skill-map rules/AGENTS.md");
+    }
+
+    rmSync(syntheticSkillDir, { recursive: true, force: true });
+    run("node", [agyScript, "--install", "--install-dir", skillSyncInstallDir, "--skills-dir", skillsDir], forkDir);
+    try {
+      lstatSync(join(skillsDir, "synthetic-upstream-skill"));
+      throw new Error("Expected synthetic-upstream-skill symlink to be pruned after removal");
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
+    const t3RemStatus = runT3Sync("--status", "--check");
+    if (t3RemStatus.status !== 3) {
+      throw new Error(`Expected exit 3 after removing upstream skill, got ${t3RemStatus.status}: ${t3RemStatus.stderr || t3RemStatus.stdout}`);
+    }
+    const t3RemReport = JSON.parse(t3RemStatus.stdout).profiles["profile-ci"];
+    if (!t3RemReport.source_stale || t3RemReport.drift.length !== 0) {
+      throw new Error(`Unexpected T3 status after upstream skill removal: ${t3RemStatus.stdout}`);
+    }
+    const t3RemApply = runT3Sync("--apply");
+    if (t3RemApply.status !== 0) {
+      throw new Error(`Expected sync-t3-skills --apply after removal to succeed: ${t3RemApply.stderr || t3RemApply.stdout}`);
+    }
+    if (runT3Sync("--status", "--check").status !== 0) {
+      throw new Error("Expected sync-t3-skills --status --check exit 0 after applying removal");
+    }
+    if (existsSync(join(t3ProfileCfg, "skills", "synthetic-upstream-skill"))) {
+      throw new Error("Expected synthetic-upstream-skill stub to be removed from T3 profile");
+    }
+    if (readFileSync(t3RulesPath, "utf8").includes("synthetic-upstream-skill")) {
+      throw new Error("Expected synthetic-upstream-skill to be removed from T3 rules/AGENTS.md");
+    }
+    if (!existsSync(join(skillsDir, "custom-skill", "SKILL.md")) || !existsSync(join(t3ProfileCfg, "skills", "custom-skill", "SKILL.md"))) {
+      throw new Error("Expected custom-skill to remain intact after upstream add/remove cycle");
     }
 
     console.log("ALL sync-upstream.mjs SELF-TESTS PASSED");

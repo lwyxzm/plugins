@@ -29,5 +29,11 @@ jobs:
       - name: Test T3 Antigravity skill map sync CLI
         run: python3 scripts/test-sync-t3-skills.py
 
+      - name: Check pstack docs
+        run: node scripts/check-pstack-docs.mjs
+
+      - name: Test upstream sync and Antigravity skill-link lifecycle
+        run: node scripts/sync-upstream.mjs --self-test
+
       - name: Test pstack skill scripts
         run: node --disable-warning=ExperimentalWarning --test pstack/skills/*/scripts/test/*.test.ts
