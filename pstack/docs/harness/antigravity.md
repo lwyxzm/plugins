@@ -46,6 +46,8 @@ Antigravity Orchestrator models run in two phases per request: a read-only **Pla
 
 When `orchestrator_capabilities` and `delegate_task` are present, read [the T3 Code overlay](./t3-code.md) once per session and use `delegate_task` for cross-provider panel seats, `isolation: "worktree"` fan-outs, and canonical or `t3:` model specs. Standalone Antigravity uses the rules below.
 
+When T3 Code's Antigravity `customization_budget` evicts `t3-code` or `agy-fast` MCP tools, use [the T3 Code skill map](./t3-skill-map.md) (`<pstack>/docs/harness/sync-t3-skills.py`) to consolidate skills per T3 profile with zero changes to standalone `agy` CLI.
+
 ### 1. Default Mode: Same-Vendor Fast Concurrency
 
 By default, pstack in Antigravity runs **fast same-vendor concurrency** using native `invoke_subagent` and `run_workflow`, consuming zero external CLI quota unless cross-vendor execution is configured or requested:

@@ -26,5 +26,8 @@ jobs:
       - name: Verify shared skill parity and reviewed agent mappings
         run: python3 scripts/check-pstack-parity.py
 
+      - name: Test T3 Antigravity skill map sync CLI
+        run: python3 scripts/test-sync-t3-skills.py
+
       - name: Test pstack skill scripts
         run: node --disable-warning=ExperimentalWarning --test pstack/skills/*/scripts/test/*.test.ts
