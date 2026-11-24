@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -246,6 +246,34 @@ function runSelfTest() {
     const r2 = run("node", [scriptPath, "--install-dir", installDir], forkDir);
     if (!r2.stdout.includes("Already up to date")) {
       throw new Error(`Expected idempotent second sync, got:\n${r2.stdout}`);
+    }
+
+    const agyScript = join(forkDir, "scripts", "generate-pstack-agy.mjs");
+    const skillSyncInstallDir = join(base, "installed-pstack-with-skills");
+    const skillsDir = join(base, "agy-skills");
+    mkdirSync(join(skillsDir, "custom-skill"), { recursive: true });
+    writeFileSync(join(skillsDir, "custom-skill", "SKILL.md"), "---\nname: custom-skill\n---\n", "utf8");
+    symlinkSync(join(skillSyncInstallDir, "skills", "obsolete-skill"), join(skillsDir, "obsolete-skill"), "dir");
+
+    const s1 = run("node", [agyScript, "--install", "--install-dir", skillSyncInstallDir, "--skills-dir", skillsDir], forkDir);
+    if (!s1.stdout.includes("Synced skill links")) {
+      throw new Error(`Expected skill link sync output, got:\n${s1.stdout}`);
+    }
+    if (readlinkSync(join(skillsDir, "reframe")) !== join(skillSyncInstallDir, "skills", "reframe")) {
+      throw new Error("Expected reframe skill symlink to be installed");
+    }
+    try {
+      lstatSync(join(skillsDir, "obsolete-skill"));
+      throw new Error("Expected stale pstack symlink obsolete-skill to be removed");
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
+    if (lstatSync(join(skillsDir, "custom-skill")).isSymbolicLink() || !existsSync(join(skillsDir, "custom-skill", "SKILL.md"))) {
+      throw new Error("Expected non-pstack custom-skill directory to stay intact");
+    }
+    const s2 = run("node", [agyScript, "--install", "--install-dir", skillSyncInstallDir, "--skills-dir", skillsDir], forkDir);
+    if (s2.stdout.includes("Synced skill links")) {
+      throw new Error(`Expected idempotent second skill-link sync, got:\n${s2.stdout}`);
     }
 
     console.log("ALL sync-upstream.mjs SELF-TESTS PASSED");

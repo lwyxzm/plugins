@@ -45,9 +45,11 @@ def main():
     try:
         source = stage / "source-skills"
         source.mkdir()
+        pstack_count = 0
         for d in sorted((AGY_PSTACK / "skills").iterdir()):
             if (d / "SKILL.md").is_file():
                 (source / d.name).symlink_to(d)
+                pstack_count += 1
 
         # Synthetic non-pstack skills + _shared
         (source / "_shared").mkdir()
@@ -130,7 +132,12 @@ def main():
         dry = run_cli("--dry-run", "--agy-fast-lazy")
         must(dry.returncode == 0, f"--dry-run failed: {dry.stderr}")
         dry_json = json.loads(dry.stdout)
-        must(dry_json["skills"] == 62 and len(dry_json["changed_paths"]) == 6, f"Unexpected dry-run: {dry_json}")
+        must(
+            dry_json["pstack"] == pstack_count
+            and dry_json["skills"] == pstack_count + 2
+            and len(dry_json["changed_paths"]) == 6,
+            f"Unexpected dry-run: {dry_json}",
+        )
         must(not state.exists(), "--dry-run created state dir")
         for pid in profile_ids:
             must((profiles / pid / "config/skills").is_symlink(), "--dry-run mutated skills symlink")

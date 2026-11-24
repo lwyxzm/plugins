@@ -12,10 +12,11 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, posix, relative, resolve } from "node:path";
+import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -471,9 +472,78 @@ function installTree({ targetDir, preservedRules, useSymlink = false }) {
 function resolveInstallDirArg(argv) {
   const idx = argv.indexOf("--install-dir");
   if (idx !== -1 && idx + 1 < argv.length && argv[idx + 1]) {
-    return resolve(argv[idx + 1]);
+    return { targetDir: resolve(argv[idx + 1]), explicit: true };
   }
-  return join(homedir(), ".gemini", "config", "plugins", "pstack");
+  return { targetDir: join(homedir(), ".gemini", "config", "plugins", "pstack"), explicit: false };
+}
+
+function resolveSkillsDirArg(argv, hasExplicitInstallDir) {
+  const idx = argv.indexOf("--skills-dir");
+  if (idx !== -1 && idx + 1 < argv.length && argv[idx + 1]) {
+    return { skillsDir: resolve(argv[idx + 1]), createIfMissing: true };
+  }
+  if (!hasExplicitInstallDir) {
+    return { skillsDir: join(homedir(), ".gemini", "config", "skills"), createIfMissing: false };
+  }
+  return { skillsDir: null, createIfMissing: false };
+}
+
+function pointsInside(baseDir, linkPath) {
+  const target = resolve(dirname(linkPath), readlinkSync(linkPath));
+  return target === baseDir || target.startsWith(`${baseDir}${sep}`);
+}
+
+function syncSkillLinks({ targetDir, skillsDir, createIfMissing = false }) {
+  if (!skillsDir) return;
+  if (!existsSync(skillsDir)) {
+    if (!createIfMissing) return;
+    mkdirSync(skillsDir, { recursive: true });
+  }
+  const installedSkillsDir = resolve(join(targetDir, "skills"));
+  if (!existsSync(installedSkillsDir)) return;
+
+  const desired = new Set(
+    readdirSync(installedSkillsDir).filter((name) => existsSync(join(installedSkillsDir, name, "SKILL.md"))),
+  );
+
+  let added = 0;
+  let updated = 0;
+  let removed = 0;
+
+  for (const name of readdirSync(skillsDir)) {
+    const entryPath = join(skillsDir, name);
+    if (!lstatSync(entryPath).isSymbolicLink()) continue;
+    if (pointsInside(installedSkillsDir, entryPath) && !desired.has(name)) {
+      unlinkSync(entryPath);
+      removed += 1;
+    }
+  }
+
+  for (const name of [...desired].sort()) {
+    const dest = join(skillsDir, name);
+    const want = join(installedSkillsDir, name);
+    if (pathExistsOrSymlink(dest)) {
+      if (lstatSync(dest).isSymbolicLink()) {
+        if (readlinkSync(dest) === want) continue;
+        if (pointsInside(installedSkillsDir, dest)) {
+          unlinkSync(dest);
+          symlinkSync(want, dest, "dir");
+          updated += 1;
+        } else {
+          console.warn(`Skipping external symlink at ${dest} -> ${readlinkSync(dest)}`);
+        }
+      } else {
+        console.warn(`Skipping non-symlink entry at ${dest}`);
+      }
+    } else {
+      symlinkSync(want, dest, "dir");
+      added += 1;
+    }
+  }
+
+  if (added > 0 || updated > 0 || removed > 0) {
+    console.log(`Synced skill links in ${skillsDir}: +${added} added, ~${updated} updated, -${removed} removed`);
+  }
 }
 
 function main() {
@@ -491,10 +561,12 @@ function main() {
     github: GITHUB,
   });
 
-  const isCheck = process.argv.includes("--check");
-  const isInstall = process.argv.includes("--install");
-  const useSymlink = process.argv.includes("--symlink");
-  const targetDir = resolveInstallDirArg(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const isCheck = argv.includes("--check");
+  const isInstall = argv.includes("--install");
+  const useSymlink = argv.includes("--symlink");
+  const { targetDir, explicit: hasExplicitInstallDir } = resolveInstallDirArg(argv);
+  const { skillsDir, createIfMissing } = resolveSkillsDirArg(argv, hasExplicitInstallDir);
   const defaultRules = files.get("rules/AGENTS.md")?.bytes.toString("utf8") ?? "";
   const preservedRules = isInstall ? readPreservedUserRules(targetDir, defaultRules) : null;
 
@@ -513,6 +585,7 @@ function main() {
 
   if (isInstall) {
     installTree({ targetDir, preservedRules, useSymlink });
+    syncSkillLinks({ targetDir, skillsDir, createIfMissing });
   }
 }
 
