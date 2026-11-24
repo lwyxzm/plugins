@@ -57,6 +57,8 @@ export const LINK_RE = /\]\(([^)\s]+)\)/g;
 const AGY_ADAPTER = "docs/harness/antigravity.md";
 const AGY_RUNNER = "docs/harness/run-external-agent.mjs";
 const T3_OVERLAY = "docs/harness/t3-code.md";
+const T3_SKILL_SYNC = "docs/harness/sync-t3-skills.py";
+const T3_SKILL_MAP_DOC = "docs/harness/t3-skill-map.md";
 const GUIDE = "docs/guide";
 
 export function walk(dir) {
@@ -327,6 +329,8 @@ export function buildAntigravityFiles({
 
   files.set(AGY_ADAPTER, file(adapterPath));
   files.set(T3_OVERLAY, file(join(pstack, T3_OVERLAY)));
+  files.set(T3_SKILL_MAP_DOC, file(join(pstack, T3_SKILL_MAP_DOC)));
+  files.set(T3_SKILL_SYNC, { bytes: readFileSync(join(pstack, T3_SKILL_SYNC)), executable: true });
   files.set(AGY_RUNNER, { bytes: readFileSync(join(pstack, AGY_RUNNER)), executable: true });
   files.set("README.md", file(join(pstack, "README.md")));
   files.set("LICENSE", file(join(pstack, "LICENSE")));

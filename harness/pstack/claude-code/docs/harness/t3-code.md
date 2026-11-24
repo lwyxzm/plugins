@@ -42,3 +42,6 @@ When exposed in the session, prefer T3 Code's native MCP tools across all three 
 - **Worktrees:** use `delegate_task(isolation: "worktree")` or `t3_worktree_handoff` instead of creating child worktrees manually in the shell.
 - **UI & mobile verification (`Prove It Works`):** use `preview_*` for web and `device_*` for iOS Simulator / Android Emulator (respecting user mobile/Expo build-cache rules).
 - **Schedules & secrets:** use `schedule_task` (in place of Cursor Automations / `/loop`) and `request_secret` (in place of `SendToUser`).
+
+## 7. Antigravity Skill Routing & Budget Recovery
+When T3 Code Antigravity (`antigravity-acp`) evicts large `t3-code` tools or `agy-fast` due to shared `customization_budget` pressure from user skills, run `python3 <pstack>/docs/harness/sync-t3-skills.py --profiles-dir ~/.t3/userdata/providers/antigravity --apply --agy-fast-lazy` (reversible with `--rollback`; leaves standalone `agy` CLI untouched).
