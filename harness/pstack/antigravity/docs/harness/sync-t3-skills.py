@@ -404,7 +404,7 @@ def finish(journal, state):
     return committed
 
 
-def profiles_selected(root, selectors):
+def profiles_selected(root, selectors, plugins_source=None):
     real_directory(root)
     if not selectors:
         selectors = [p.name for p in root.iterdir() if not p.name.startswith(".") and (p / "config").is_dir()]
@@ -415,7 +415,15 @@ def profiles_selected(root, selectors):
         profile = root / name
         real_directory(profile)
         real_directory(profile / "config")
-        real_directory(profile / "config/plugins")
+        plugins_dir = profile / "config/plugins"
+        if plugins_dir.is_symlink() and plugins_source is not None:
+            require(plugins_dir.resolve() == plugins_source.resolve(), f"Unexpected plugins link target {plugins_dir}")
+            plugins_dir.unlink()
+            plugins_dir.mkdir(mode=0o755)
+            for plugin in plugins_source.iterdir():
+                if not plugin.name.startswith("."):
+                    (plugins_dir / plugin.name).symlink_to(plugin)
+        real_directory(plugins_dir)
         config = profile / "config/config.json"
         if config.exists():
             require(config.is_file() and not config.is_symlink(), f"Unexpected profile preferences {config}")
@@ -468,7 +476,8 @@ def run(args):
     for path in (root, state_dir):
         require(not any(path.is_relative_to(p.resolve()) or p.resolve().is_relative_to(path) for p in protected),
                 f"Write root overlaps authoritative sources or protected directories: {path}")
-    profiles = profiles_selected(root, args.profile)
+    plugins_source = upstream.parent if upstream.parent.is_dir() else None
+    profiles = profiles_selected(root, args.profile, plugins_source=plugins_source)
     for profile in profiles:
         require(not state_dir.is_relative_to(profile), f"State directory is inside profile {profile}")
     journal = state_dir / "state.json"
